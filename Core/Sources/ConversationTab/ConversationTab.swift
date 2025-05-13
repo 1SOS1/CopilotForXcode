@@ -159,8 +159,6 @@ public class ConversationTab: ChatTab {
     public func start() {
         observer = .init()
         cancellable = []
-        
-        chat.send(.setDiffViewerController(chat: chat))
 
 //        chatTabStore.send(.updateTitle("Chat"))
 

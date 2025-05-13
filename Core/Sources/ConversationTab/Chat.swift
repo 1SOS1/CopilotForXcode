@@ -7,9 +7,6 @@ import Terminal
 import ConversationServiceProvider
 import Persist
 import GitHubCopilotService
-import Logger
-import OrderedCollections
-import SwiftUI
 
 public struct DisplayedChatMessage: Equatable {
     public enum Role: Equatable {
@@ -27,9 +24,8 @@ public struct DisplayedChatMessage: Equatable {
     public var suggestedTitle: String? = nil
     public var errorMessage: String? = nil
     public var steps: [ConversationProgressStep] = []
-    public var editAgentRounds: [AgentRound] = []
 
-    public init(id: String, role: Role, text: String, references: [ConversationReference] = [], followUp: ConversationFollowUp? = nil, suggestedTitle: String? = nil, errorMessage: String? = nil, steps: [ConversationProgressStep] = [], editAgentRounds: [AgentRound] = []) {
+    public init(id: String, role: Role, text: String, references: [ConversationReference] = [], followUp: ConversationFollowUp? = nil, suggestedTitle: String? = nil, errorMessage: String? = nil, steps: [ConversationProgressStep] = []) {
         self.id = id
         self.role = role
         self.text = text
@@ -38,7 +34,6 @@ public struct DisplayedChatMessage: Equatable {
         self.suggestedTitle = suggestedTitle
         self.errorMessage = errorMessage
         self.steps = steps
-        self.editAgentRounds = editAgentRounds
     }
 }
 
@@ -62,10 +57,7 @@ struct Chat {
         var focusedField: Field?
         var currentEditor: FileReference? = nil
         var selectedFiles: [FileReference] = []
-        /// Cache the original content
-        var fileEditMap: OrderedDictionary<URL, FileEdit> = [:]
-        var diffViewerController: DiffViewWindowController? = nil
-        var isAgentMode: Bool = AppState.shared.isAgentModeEnabled()
+
         enum Field: String, Hashable {
             case textField
             case fileSearchBar
@@ -90,18 +82,13 @@ struct Chat {
         case downvote(MessageID, ConversationRating)
         case copyCode(MessageID)
         case insertCode(String)
-        case toolCallStarted(String)
-        case toolCallCompleted(String, String)
-        case toolCallCancelled(String)
 
         case observeChatService
         case observeHistoryChange
         case observeIsReceivingMessageChange
-        case observeFileEditChange
 
         case historyChanged
         case isReceivingMessageChanged
-        case fileEditChanged
 
         case chatMenu(ChatMenu.Action)
         
@@ -112,16 +99,6 @@ struct Chat {
         case setCurrentEditor(FileReference)
         
         case followUpButtonClicked(String, String)
-        
-        // Agent File Edit
-        case undoEdits(fileURLs: [URL])
-        case keepEdits(fileURLs: [URL])
-        case resetEdits
-        case discardFileEdits(fileURLs: [URL])
-        case openDiffViewWindow(fileURL: URL)
-        case setDiffViewerController(chat: StoreOf<Chat>)
-
-        case agentModeChanged(Bool)
     }
 
     let service: ChatService
@@ -131,11 +108,9 @@ struct Chat {
         case observeHistoryChange(UUID)
         case observeIsReceivingMessageChange(UUID)
         case sendMessage(UUID)
-        case observeFileEditChange(UUID)
     }
 
     @Dependency(\.openURL) var openURL
-    @AppStorage(\.enableCurrentEditorContext) var enableCurrentEditorContext: Bool
 
     var body: some ReducerOf<Self> {
         BindingReducer()
@@ -154,12 +129,6 @@ struct Chat {
                     await send(.isReceivingMessageChanged)
                     await send(.focusOnTextField)
                     await send(.refresh)
-
-                    let publisher = NotificationCenter.default.publisher(for: .gitHubCopilotChatModeDidChange)
-                    for await _ in publisher.values {
-                        let isAgentMode = AppState.shared.isAgentModeEnabled()
-                        await send(.agentModeChanged(isAgentMode))
-                    }
                 }
 
             case .refresh:
@@ -170,42 +139,21 @@ struct Chat {
             case let .sendButtonTapped(id):
                 guard !state.typedMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .none }
                 let message = state.typedMessage
-                let skillSet = state.buildSkillSet(
-                    isCurrentEditorContextEnabled: enableCurrentEditorContext
-                )
+                let skillSet = state.buildSkillSet()
                 state.typedMessage = ""
                 
                 let selectedFiles = state.selectedFiles
-                let selectedModelFamily = AppState.shared.getSelectedModelFamily() ?? CopilotModelManager.getDefaultChatModel(scope: AppState.shared.modelScope())?.modelFamily
-                let agentMode = AppState.shared.isAgentModeEnabled()
+                let selectedModelFamily = AppState.shared.getSelectedModelFamily() ?? CopilotModelManager.getDefaultChatLLM()?.modelFamily
                 return .run { _ in
-                    try await service.send(id, content: message, skillSet: skillSet, references: selectedFiles, model: selectedModelFamily, agentMode: agentMode)
-                }.cancellable(id: CancelID.sendMessage(self.id))
-            
-            case let .toolCallStarted(toolCallId):
-                guard !toolCallId.isEmpty else { return .none }
-                return .run { _ in
-                    service.updateToolCallStatus(toolCallId: toolCallId, status: .running)
-                }.cancellable(id: CancelID.sendMessage(self.id))
-            case let .toolCallCancelled(toolCallId):
-                guard !toolCallId.isEmpty else { return .none }
-                return .run { _ in
-                    service.updateToolCallStatus(toolCallId: toolCallId, status: .cancelled)
-                }.cancellable(id: CancelID.sendMessage(self.id))
-            case let .toolCallCompleted(toolCallId, result):
-                guard !toolCallId.isEmpty else { return .none }
-                return .run { _ in
-                    service.updateToolCallStatus(toolCallId: toolCallId, status: .completed, payload: result)
+                    try await service.send(id, content: message, skillSet: skillSet, references: selectedFiles, model: selectedModelFamily)
                 }.cancellable(id: CancelID.sendMessage(self.id))
                 
             case let .followUpButtonClicked(id, message):
                 guard !message.isEmpty else { return .none }
-                let skillSet = state.buildSkillSet(
-                    isCurrentEditorContextEnabled: enableCurrentEditorContext
-                )
+                let skillSet = state.buildSkillSet()
                 
                 let selectedFiles = state.selectedFiles
-                let selectedModelFamily = AppState.shared.getSelectedModelFamily() ?? CopilotModelManager.getDefaultChatModel(scope: AppState.shared.modelScope())?.modelFamily
+                let selectedModelFamily = AppState.shared.getSelectedModelFamily() ?? CopilotModelManager.getDefaultChatLLM()?.modelFamily
                 
                 return .run { _ in
                     try await service.send(id, content: message, skillSet: skillSet, references: selectedFiles, model: selectedModelFamily)
@@ -275,7 +223,6 @@ struct Chat {
                 return .run { send in
                     await send(.observeHistoryChange)
                     await send(.observeIsReceivingMessageChange)
-                    await send(.observeFileEditChange)
                 }
 
             case .observeHistoryChange:
@@ -315,25 +262,6 @@ struct Chat {
                     id: CancelID.observeIsReceivingMessageChange(id),
                     cancelInFlight: true
                 )
-                
-            case .observeFileEditChange:
-                return .run { send in
-                    let stream = AsyncStream<Void> { continuation in
-                        let cancellable = service.$fileEditMap
-                            .sink { _ in
-                                continuation.yield()
-                            }
-                        continuation.onTermination = { _ in
-                            cancellable.cancel()
-                        }
-                    }
-                    for await _ in stream {
-                        await send(.fileEditChanged)
-                    }
-                }.cancellable(
-                    id: CancelID.observeFileEditChange(id),
-                    cancelInFlight: true
-                )
 
             case .historyChanged:
                 state.history = service.chatHistory.flatMap { message in
@@ -358,8 +286,7 @@ struct Chat {
                         followUp: message.followUp,
                         suggestedTitle: message.suggestedTitle,
                         errorMessage: message.errorMessage,
-                        steps: message.steps,
-                        editAgentRounds: message.editAgentRounds
+                        steps: message.steps
                     ))
 
                     return all
@@ -370,42 +297,6 @@ struct Chat {
             case .isReceivingMessageChanged:
                 state.isReceivingMessage = service.isReceivingMessage
                 return .none
-                
-            case .fileEditChanged:
-                state.fileEditMap = service.fileEditMap
-                let fileEditMap = state.fileEditMap
-                
-                let diffViewerController = state.diffViewerController
-                
-                return .run { _ in
-                    /// refresh diff view
-                    
-                    guard let diffViewerController,
-                          diffViewerController.diffViewerState == .shown
-                    else { return }
-                    
-                    if fileEditMap.isEmpty {
-                        await diffViewerController.hideWindow()
-                        return
-                    }
-                    
-                    guard let currentFileEdit = diffViewerController.currentFileEdit
-                    else { return }
-                    
-                    if let updatedFileEdit = fileEditMap[currentFileEdit.fileURL] {
-                        if updatedFileEdit != currentFileEdit {
-                            if updatedFileEdit.status == .undone,
-                               updatedFileEdit.toolName == .createFile
-                            {
-                                await diffViewerController.hideWindow()
-                            } else {
-                                await diffViewerController.showDiffWindow(fileEdit: updatedFileEdit)
-                            }
-                        }
-                    } else {
-                        await diffViewerController.hideWindow()
-                    }
-                }
 
             case .binding:
                 return .none
@@ -442,54 +333,6 @@ struct Chat {
                 return .none
             case let .setCurrentEditor(fileReference):
                 state.currentEditor = fileReference
-                return .none
-                
-            // MARK: - Agent Edits
-                
-            case let .undoEdits(fileURLs):
-                for fileURL in fileURLs {
-                    do {
-                        try service.undoFileEdit(for: fileURL)
-                    } catch {
-                        Logger.service.error("Failed to undo edit, \(error)")
-                    }
-                }
-                
-                return .none
-                
-            case let .keepEdits(fileURLs):
-                for fileURL in fileURLs {
-                    service.keepFileEdit(for: fileURL)
-                }
-                
-                return .none
-            
-            case .resetEdits:
-                service.resetFileEdits()
-                
-                return .none
-                
-            case let .discardFileEdits(fileURLs):
-                for fileURL in fileURLs {
-                    try? service.discardFileEdit(for: fileURL)
-                }
-                return .none
-                
-            case let .openDiffViewWindow(fileURL):
-                guard let fileEdit = state.fileEditMap[fileURL],
-                      let diffViewerController = state.diffViewerController
-                else { return .none }
-                
-                return .run { _ in
-                    await diffViewerController.showDiffWindow(fileEdit: fileEdit)
-                }
-                
-            case let .setDiffViewerController(chat):
-                state.diffViewerController = .init(chat: chat)
-                return .none
-
-            case let .agentModeChanged(isAgentMode):
-                state.isAgentMode = isAgentMode
                 return .none
             }
         }
@@ -564,4 +407,3 @@ private actor TimedDebounceFunction {
         await block()
     }
 }
-

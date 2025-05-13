@@ -1,5 +1,4 @@
 import Foundation
-import ConversationServiceProvider
 import Combine
 import JSONRPC
 import LanguageClient
@@ -31,11 +30,6 @@ class ServerRequestHandlerImpl : ServerRequestHandler {
                 let watchedFilesParams = try JSONDecoder().decode(WatchedFilesParams.self, from: params)
                 watchedFilesHandler.handleWatchedFiles(WatchedFilesRequest(id: request.id, method: request.method, params: watchedFilesParams), workspaceURL: workspaceURL, completion: callback, service: service)
                 
-            case "conversation/invokeClientTool":
-                let params = try JSONEncoder().encode(request.params)
-                let invokeParams = try JSONDecoder().decode(InvokeClientToolParams.self, from: params)
-                ClientToolHandlerImpl.shared.invokeClientTool(InvokeClientToolRequest(id: request.id, method: request.method, params: invokeParams), completion: callback)
-
             default:
                 break
             }

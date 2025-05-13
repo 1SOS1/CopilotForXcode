@@ -2,8 +2,8 @@ import ChatService
 import ConversationServiceProvider
 
 extension Chat.State {
-    func buildSkillSet(isCurrentEditorContextEnabled: Bool) -> [ConversationSkill] {
-        guard let currentFile = self.currentEditor, isCurrentEditorContextEnabled else {
+    func buildSkillSet() -> [ConversationSkill] {
+        guard let currentFile = self.currentEditor else {
             return []
         }
         let fileReference = FileReference(

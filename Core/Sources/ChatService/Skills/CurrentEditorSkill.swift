@@ -5,7 +5,7 @@ import JSONRPC
 
 public class CurrentEditorSkill: ConversationSkill {
     public static let ID = "current-editor"
-    public let currentFile: FileReference
+    private var currentFile: FileReference
     public var id: String {
         return CurrentEditorSkill.ID
     }

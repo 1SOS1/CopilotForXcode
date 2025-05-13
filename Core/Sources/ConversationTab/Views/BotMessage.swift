@@ -17,7 +17,6 @@ struct BotMessage: View {
     let errorMessage: String?
     let chat: StoreOf<Chat>
     let steps: [ConversationProgressStep]
-    let editAgentRounds: [AgentRound]
     
     @Environment(\.colorScheme) var colorScheme
     @AppStorage(\.chatFontSize) var chatFontSize
@@ -123,10 +122,6 @@ struct BotMessage: View {
                 if steps.count > 0 {
                     ProgressStep(steps: steps)
                 }
-                
-                if editAgentRounds.count > 0 {
-                    ProgressAgentRound(rounds: editAgentRounds, chat: chat)
-                }
 
                 ThemedMarkdownText(text: text, chat: chat)
 
@@ -187,7 +182,6 @@ struct ReferenceList: View {
                             HStack(spacing: 8) {
                                 drawFileIcon(reference.url)
                                     .resizable()
-                                    .scaledToFit()
                                     .frame(width: 16, height: 16)
                                 Text(reference.fileName)
                                     .truncationMode(.middle)
@@ -238,24 +232,6 @@ struct BotMessage_Previews: PreviewProvider {
         .init(id: "003", title: "failed step", description: "this is failed step", status: .failed, error: nil),
         .init(id: "004", title: "cancelled step", description: "this is cancelled step", status: .cancelled, error: nil)
     ]
-
-    static let agentRounds: [AgentRound] = [
-        .init(roundId: 1, reply: "this is agent step 1", toolCalls: [
-            .init(
-                id: "toolcall_001",
-                name: "Tool Call 1",
-                progressMessage: "Read Tool Call 1",
-                status: .completed,
-                error: nil)
-            ]),
-        .init(roundId: 2, reply: "this is agent step 2", toolCalls: [
-            .init(
-                id: "toolcall_002",
-                name: "Tool Call 2",
-                progressMessage: "Running Tool Call 2",
-                status: .running)
-            ])
-        ]
     
     static var previews: some View {
         let chatTabInfo = ChatTabInfo(id: "id", workspacePath: "path", username: "name")
@@ -275,8 +251,7 @@ struct BotMessage_Previews: PreviewProvider {
             followUp: ConversationFollowUp(message: "followup question", id: "id", type: "type"),
             errorMessage: "Sorry, an error occurred while generating a response.",
             chat: .init(initialState: .init(), reducer: { Chat(service: ChatService.service(for: chatTabInfo)) }),
-            steps: steps,
-            editAgentRounds: agentRounds
+            steps: steps
         )
         .padding()
         .fixedSize(horizontal: true, vertical: true)

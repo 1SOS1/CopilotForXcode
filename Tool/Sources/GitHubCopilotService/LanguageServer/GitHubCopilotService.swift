@@ -54,35 +54,29 @@ public protocol GitHubCopilotConversationServiceType {
     func createConversation(_ message: String,
                             workDoneToken: String,
                             workspaceFolder: String,
-                            workspaceFolders: [WorkspaceFolder]?,
-                            activeDoc: Doc?,
+                            doc: Doc?,
                             skills: [String],
                             ignoredSkills: [String]?,
                             references: [FileReference],
                             model: String?,
-                            turns: [TurnSchema],
-                            agentMode: Bool) async throws
+                            turns: [TurnSchema]) async throws
     func createTurn(_ message: String,
                     workDoneToken: String,
                     conversationId: String,
-                    activeDoc: Doc?,
+                    doc: Doc?,
                     ignoredSkills: [String]?,
                     references: [FileReference],
                     model: String?,
-                    workspaceFolder: String,
-                    workspaceFolders: [WorkspaceFolder]?,
-                    agentMode: Bool) async throws
+                    workspaceFolder: String?) async throws
     func rateConversation(turnId: String, rating: ConversationRating) async throws
     func copyCode(turnId: String, codeBlockIndex: Int, copyType: CopyKind, copiedCharacters: Int, totalCharacters: Int, copiedText: String) async throws
     func cancelProgress(token: String) async
     func templates() async throws -> [ChatTemplate]
     func models() async throws -> [CopilotModel]
-    func registerTools(tools: [LanguageModelToolInformation]) async throws
 }
 
 protocol GitHubCopilotLSP {
     func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E) async throws -> E.Response
-    func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E, timeout: TimeInterval) async throws -> E.Response
     func sendNotification(_ notif: ClientNotification) async throws
 }
 
@@ -161,7 +155,6 @@ public class GitHubCopilotBaseService {
             var path = SystemUtils.shared.getXcodeBinaryPath()
             var args = ["--stdio"]
             let home = ProcessInfo.processInfo.homePath
-            let systemPath = getTerminalPATH() ?? ProcessInfo.processInfo.environment["PATH"] ?? ""
             let versionNumber = JSONValue(
                 stringLiteral: SystemUtils.editorPluginVersion ?? ""
             )
@@ -181,17 +174,17 @@ public class GitHubCopilotBaseService {
                 let nodePath = Bundle.main.infoDictionary?["NODE_PATH"] as? String ?? "node"
                 if FileManager.default.fileExists(atPath: jsPath.path) {
                     path = "/usr/bin/env"
-                    args = [nodePath, "--inspect", jsPath.path, "--stdio"]
+                    args = [nodePath, jsPath.path, "--stdio"]
                     Logger.debug.info("Using local language server \(path) \(args)")
                 }
             }
             // Set debug port and verbose when running in debug
-            let environment: [String: String] = ["HOME": home, "GH_COPILOT_DEBUG_UI_PORT": "8180", "GH_COPILOT_VERBOSE": "true", "PATH": systemPath]
+            let environment: [String: String] = ["HOME": home, "GH_COPILOT_DEBUG_UI_PORT": "8080", "GH_COPILOT_VERBOSE": "true"]
             #else
             let environment: [String: String] = if UserDefaults.shared.value(for: \.verboseLoggingEnabled) {
-                ["HOME": home, "GH_COPILOT_VERBOSE": "true", "PATH": systemPath]
+                ["HOME": home, "GH_COPILOT_VERBOSE": "true"]
             } else {
-                ["HOME": home, "PATH": systemPath]
+                ["HOME": home]
             }
             #endif
 
@@ -211,7 +204,7 @@ public class GitHubCopilotBaseService {
             }
             let server = InitializingServer(server: localServer)
             // TODO: set proper timeout against different request.
-            server.defaultTimeout = 90
+            server.defaultTimeout = 60
             server.initializeParamsProvider = {
                 let capabilities = ClientCapabilities(
                     workspace: .init(
@@ -339,41 +332,6 @@ public class GitHubCopilotBaseService {
     }
 }
 
-func getTerminalPATH() -> String? {
-    let process = Process()
-    let pipe = Pipe()
-    
-    guard let userShell = ProcessInfo.processInfo.environment["SHELL"] else {
-        print("Cannot determine user's default shell.")
-        return nil
-    }
-    
-    let shellName = URL(fileURLWithPath: userShell).lastPathComponent
-    let command: String
-    
-    if shellName == "zsh" {
-        command = "source ~/.zshrc >/dev/null 2>&1; echo $PATH"
-    } else {
-        command = "source ~/.bashrc >/dev/null 2>&1; echo $PATH"
-    }
-    
-    process.executableURL = URL(fileURLWithPath: userShell)
-    process.arguments = ["-i", "-l", "-c", command]
-    process.standardOutput = pipe
-    
-    do {
-        try process.run()
-        process.waitUntilExit()
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    } catch {
-        print("Error: \(error)")
-        return nil
-    }
-}
-
 @globalActor public enum GitHubCopilotSuggestionActor {
     public actor TheActor {}
     public static let shared = TheActor()
@@ -409,10 +367,6 @@ public final class GitHubCopilotService:
             updateStatusInBackground()
 
             GitHubCopilotService.services.append(self)
-            
-            Task {
-                await registerClientTools(server: self)
-            }
         } catch {
             Logger.gitHubCopilot.error(error)
             throw error
@@ -532,14 +486,12 @@ public final class GitHubCopilotService:
     public func createConversation(_ message: String,
                                    workDoneToken: String,
                                    workspaceFolder: String,
-                                   workspaceFolders: [WorkspaceFolder]? = nil,
-                                   activeDoc: Doc?,
+                                   doc: Doc?,
                                    skills: [String],
                                    ignoredSkills: [String]?,
                                    references: [FileReference],
                                    model: String?,
-                                   turns: [TurnSchema],
-                                   agentMode: Bool) async throws {
+                                   turns: [TurnSchema]) async throws {
         var conversationCreateTurns: [ConversationTurn] = []
         // invoke conversation history
         if turns.count > 0 {
@@ -555,7 +507,7 @@ public final class GitHubCopilotService:
                                               capabilities: ConversationCreateParams.Capabilities(
                                                 skills: skills,
                                                 allSkills: false),
-                                              textDocument: activeDoc,
+                                              doc: doc,
                                               references: references.map {
                                                 Reference(uri: $0.url.absoluteString,
                                                     position: nil,
@@ -566,13 +518,12 @@ public final class GitHubCopilotService:
                                                 },
                                               source: .panel,
                                               workspaceFolder: workspaceFolder,
-                                              workspaceFolders: workspaceFolders,
                                               ignoredSkills: ignoredSkills,
-                                              model: model,
-                                              chatMode: agentMode ? "Agent" : nil)
+                                              model: model)
         do {
             _ = try await sendRequest(
-                GitHubCopilotRequest.CreateConversation(params: params), timeout: conversationRequestTimeout(agentMode))
+                GitHubCopilotRequest.CreateConversation(params: params)
+            )
         } catch {
             print("Failed to create conversation. Error: \(error)")
             throw error
@@ -580,12 +531,12 @@ public final class GitHubCopilotService:
     }
 
     @GitHubCopilotSuggestionActor
-    public func createTurn(_ message: String, workDoneToken: String, conversationId: String, activeDoc: Doc?, ignoredSkills: [String]?, references: [FileReference], model: String?, workspaceFolder: String, workspaceFolders: [WorkspaceFolder]? = nil, agentMode: Bool) async throws {
+    public func createTurn(_ message: String, workDoneToken: String, conversationId: String, doc: Doc?, ignoredSkills: [String]?, references: [FileReference], model: String?, workspaceFolder: String?) async throws {
         do {
             let params = TurnCreateParams(workDoneToken: workDoneToken,
                                           conversationId: conversationId,
                                           message: message,
-                                          textDocument: activeDoc,
+                                          doc: doc,
                                           ignoredSkills: ignoredSkills,
                                           references: references.map {
                                                 Reference(uri: $0.url.absoluteString,
@@ -596,19 +547,15 @@ public final class GitHubCopilotService:
                                                     activeAt: nil)
                                           },
                                           model: model,
-                                          workspaceFolder: workspaceFolder,
-                                          workspaceFolders: workspaceFolders,
-                                          chatMode: agentMode ? "Agent" : nil)
+                                          workspaceFolder: workspaceFolder)
+                                              
             _ = try await sendRequest(
-                GitHubCopilotRequest.CreateTurn(params: params), timeout: conversationRequestTimeout(agentMode))
+                GitHubCopilotRequest.CreateTurn(params: params)
+            )
         } catch {
             print("Failed to create turn. Error: \(error)")
             throw error
         }
-    }
-
-    private func conversationRequestTimeout(_ agentMode: Bool) -> TimeInterval {
-        return agentMode ? 300 /* agent mode timeout */ : 90
     }
 
     @GitHubCopilotSuggestionActor
@@ -642,17 +589,6 @@ public final class GitHubCopilotService:
                 GitHubCopilotRequest.GetAgents()
             )
             return response
-        } catch {
-            throw error
-        }
-    }
-
-    @GitHubCopilotSuggestionActor
-    public func registerTools(tools: [LanguageModelToolInformation]) async throws {
-        do {
-            _ = try await sendRequest(
-                GitHubCopilotRequest.RegisterTools(params: RegisterToolsParams(tools: tools))
-            )
         } catch {
             throw error
         }
@@ -966,13 +902,9 @@ public final class GitHubCopilotService:
         }
     }
 
-    private func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E, timeout: TimeInterval? = nil) async throws -> E.Response {
+    private func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E) async throws -> E.Response {
         do {
-            if let timeout = timeout {
-                return try await server.sendRequest(endpoint, timeout: timeout)
-            } else {
-                return try await server.sendRequest(endpoint)
-            }
+            return try await server.sendRequest(endpoint)
         } catch let error as ServerError {
             if let info = CLSErrorInfo(for: error) {
                 // update the auth status if the error indicates it may have changed, and then rethrow
@@ -1019,14 +951,6 @@ public final class GitHubCopilotService:
 extension InitializingServer: GitHubCopilotLSP {
     func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E) async throws -> E.Response {
         try await sendRequest(endpoint.request)
-    }
-
-    func sendRequest<E: GitHubCopilotRequestType>(_ endpoint: E, timeout: TimeInterval) async throws -> E.Response {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.sendRequest(endpoint.request, timeout: timeout) { result in
-                continuation.resume(with: result)
-            }
-        }
     }
 }
 

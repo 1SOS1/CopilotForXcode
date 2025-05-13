@@ -291,10 +291,6 @@ public extension UserDefaultPreferenceKeys {
     var keepFloatOnTopIfChatPanelAndXcodeOverlaps: PreferenceKey<Bool> {
         .init(defaultValue: true, key: "KeepFloatOnTopIfChatPanelAndXcodeOverlaps")
     }
-
-    var enableCurrentEditorContext: PreferenceKey<Bool> {
-        .init(defaultValue: true, key: "EnableCurrentEditorContext")
-    }
 }
 
 // MARK: - Theme
@@ -553,10 +549,6 @@ public extension UserDefaultPreferenceKeys {
 
     var gitHubCopilotProxyPassword: PreferenceKey<String> {
         .init(defaultValue: "", key: "GitHubCopilotProxyPassword")
-    }
-    
-    var gitHubCopilotMCPConfig: PreferenceKey<String> {
-        .init(defaultValue: "", key: "GitHubCopilotMCPConfig")
     }
 
     var gitHubCopilotEnterpriseURI: PreferenceKey<String> {

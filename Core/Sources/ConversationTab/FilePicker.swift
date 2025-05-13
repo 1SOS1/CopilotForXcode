@@ -123,6 +123,7 @@ public struct FilePicker: View {
             }
             .fixedSize(horizontal: false, vertical: true)
             .cornerRadius(6)
+            .shadow(radius: 2)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
@@ -157,7 +158,6 @@ struct FileRowView: View {
             HStack {
                 drawFileIcon(doc.url)
                     .resizable()
-                    .scaledToFit()
                     .frame(width: 16, height: 16)
                     .foregroundColor(.secondary)
                     .padding(.leading, 4)
@@ -180,7 +180,6 @@ struct FileRowView: View {
             .onHover(perform: { hovering in
                 isHovered = hovering
             })
-            .transition(.move(edge: .bottom))
         }
     }
 }

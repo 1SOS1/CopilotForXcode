@@ -41,9 +41,6 @@ final class FetchSuggestionTests: XCTestCase {
                     ),
                 ]) as! E.Response
             }
-            func sendRequest<E>(_: E, timeout: TimeInterval) async throws -> E.Response where E: GitHubCopilotRequestType {
-                return GitHubCopilotRequest.InlineCompletion.Response(items: []) as! E.Response
-            }
         }
         let service = GitHubCopilotSuggestionService(serviceLocator: TestServiceLocator(server: TestServer()))
         let completions = try await service.getSuggestions(
@@ -82,10 +79,6 @@ final class FetchSuggestionTests: XCTestCase {
                         command: nil
                     ),
                 ]) as! E.Response
-            }
-            
-            func sendRequest<E>(_ endpoint: E, timeout: TimeInterval) async throws -> E.Response where E : GitHubCopilotRequestType {
-                return GitHubCopilotRequest.InlineCompletion.Response(items: []) as! E.Response
             }
         }
         let testServer = TestServer()
